@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Hermes Browser Extension",
+  "short_name": "Hermes Ext",
+  "version": "0.1.0",
+  "description": "Browser-native side panel for Hermes Agent — connect web context to your local Hermes runtime.",
+  "minimum_chrome_version": "114",
+  "icons": {
+    "16": "extension/assets/icons/icon-16.png",
+    "32": "extension/assets/icons/icon-32.png",
+    "48": "extension/assets/icons/icon-48.png",
+    "128": "extension/assets/icons/icon-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "Open Hermes Browser Extension",
+    "default_icon": {
+      "16": "extension/assets/icons/icon-16.png",
+      "32": "extension/assets/icons/icon-32.png",
+      "48": "extension/assets/icons/icon-48.png",
+      "128": "extension/assets/icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "extension/background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "extension/sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["extension/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:* http://localhost:*;"
+  }
+}
