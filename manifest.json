@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Hermes Browser Extension",
   "short_name": "Hermes Ext",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browser-native side panel for Hermes Agent — connect web context to your local Hermes runtime.",
   "minimum_chrome_version": "114",
   "icons": {
@@ -42,8 +42,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["extension/content.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "extension/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
