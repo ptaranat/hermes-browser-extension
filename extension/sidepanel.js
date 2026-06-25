@@ -2787,10 +2787,28 @@ async function askHermes(userText, turnAttachments = [...attachments]) {
   return didSend;
 }
 
+let testConnectionFlashTimer = null;
+
+function flashTestConnectionResult(ok) {
+  const button = els.testConnectionButton;
+  if (!button) return;
+  clearTimeout(testConnectionFlashTimer);
+  button.classList.remove('success', 'error');
+  button.classList.add(ok ? 'success' : 'error');
+  button.textContent = ok ? 'Connected ✓' : 'Failed';
+  testConnectionFlashTimer = setTimeout(() => {
+    button.classList.remove('success', 'error');
+    button.textContent = 'Test connection';
+  }, 2600);
+}
+
 async function testConnection() {
   await saveSettingsFromForm();
   els.testConnectionButton.disabled = true;
   els.testConnectionButton.textContent = 'Testing...';
+  els.testConnectionButton.classList.remove('success', 'error');
+  clearTimeout(testConnectionFlashTimer);
+  let ok = false;
   try {
     if (isRemoteMode()) {
       // The dashboard's REST surface (including /api/status) is CORS-blocked
@@ -2808,6 +2826,7 @@ async function testConnection() {
       }
       updateConnectionPrompt();
       setStatus('ok', 'Remote Hermes dashboard connected', `${normalizeGatewayUrl(settings.gatewayUrl)}${modelNote}`);
+      ok = true;
       return;
     }
     const response = await apiFetch('/health', { method: 'GET' });
@@ -2827,11 +2846,12 @@ async function testConnection() {
       hasSessionRoutes ? 'Hermes gateway + session API connected' : 'Hermes gateway connected',
       hasSessionRoutes ? normalizeGatewayUrl(settings.gatewayUrl) : `${normalizeGatewayUrl(settings.gatewayUrl)} - OpenAI-compatible fallback mode`,
     );
+    ok = true;
   } catch (error) {
     setStatus('error', 'Hermes gateway test failed', error?.message || String(error));
   } finally {
     els.testConnectionButton.disabled = false;
-    els.testConnectionButton.textContent = 'Test connection';
+    flashTestConnectionResult(ok);
   }
 }
 

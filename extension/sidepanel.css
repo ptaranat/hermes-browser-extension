@@ -1046,6 +1046,16 @@ textarea:focus, input:focus, select:focus { border-color: var(--hermes-accent); 
   line-height: 1;
 }
 .secondary { background: var(--hermes-paper); color: var(--hermes-ink); }
+#testConnectionButton.success {
+  background: rgba(var(--hermes-accent-rgb), 0.18);
+  color: var(--hermes-ink);
+  border-color: var(--hermes-accent);
+}
+#testConnectionButton.error {
+  background: rgba(255, 77, 114, 0.16);
+  color: var(--hermes-ink);
+  border-color: var(--danger);
+}
 #sendButton, #saveSettingsButton, #connectButton { background: var(--hermes-primary-bg); color: var(--hermes-primary-fg); border-color: var(--hermes-primary-border); }
 #sendButton:hover, #saveSettingsButton:hover, #connectButton:hover { background: var(--hermes-paper); color: var(--hermes-ink); border-color: var(--hermes-line-strong); }
 
