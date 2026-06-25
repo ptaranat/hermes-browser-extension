@@ -39,6 +39,14 @@ if (manifest.permissions?.includes('microphone') || manifest.optional_permission
 }
 if (!manifest.host_permissions?.includes('http://127.0.0.1/*')) errors.push('localhost gateway host permission missing');
 
+const connectSrc = manifest.content_security_policy?.extension_pages || '';
+const connectDirective = (connectSrc.match(/connect-src[^;]*/) || [''])[0];
+// Use scheme-sources (https:/wss:) not host+path wildcards: a CSP host-source
+// path like /* is matched literally, so wss://*/* would not match /api/ws.
+if (!/\bhttps:/.test(connectDirective) || !/\bwss:/.test(connectDirective)) {
+  errors.push('connect-src must allow https: and wss: so a remote backend (REST + WebSocket) is reachable from extension pages');
+}
+
 for (const file of requiredFiles) {
   const filePath = path.join(root, 'extension', file);
   if (!fs.existsSync(filePath)) errors.push(`Missing manifest asset: ${file}`);
