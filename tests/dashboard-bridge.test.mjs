@@ -15,6 +15,8 @@ test('originOf and wsTicketUrl normalize the dashboard base', () => {
   assert.equal(originOf('not a url'), '');
   assert.equal(wsTicketUrl('https://host.ts.net/'), 'https://host.ts.net/api/auth/ws-ticket');
   assert.equal(wsTicketUrl('https://host.ts.net/hermes'), 'https://host.ts.net/hermes/api/auth/ws-ticket');
+  // Query/hash from a pasted address bar URL must not corrupt the ticket path.
+  assert.equal(wsTicketUrl('https://host.ts.net/hermes?x=1#y'), 'https://host.ts.net/hermes/api/auth/ws-ticket');
 });
 
 test('mintTicketInPage maps fetch outcomes to structured results', async () => {

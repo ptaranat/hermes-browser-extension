@@ -20,7 +20,17 @@ export function originOf(url) {
 }
 
 export function wsTicketUrl(baseUrl) {
-  return `${String(baseUrl || '').replace(/\/+$/, '')}/api/auth/ws-ticket`;
+  // Build from a parsed URL so a pasted address with a query/hash (e.g.
+  // copied from the address bar) does not produce ".../hermes?x=1/api/...".
+  try {
+    const url = new URL(String(baseUrl || ''));
+    url.hash = '';
+    url.search = '';
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/api/auth/ws-ticket`;
+    return url.toString();
+  } catch {
+    return `${String(baseUrl || '').replace(/\/+$/, '')}/api/auth/ws-ticket`;
+  }
 }
 
 // Runs in the dashboard page. Returns a structured result rather than throwing
