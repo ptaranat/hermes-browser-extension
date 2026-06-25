@@ -1395,6 +1395,16 @@ function applySelectedModel(selectedId, { persist = true, keepOpen = false } = {
 async function loadModels({ quiet = false, payload = null } = {}) {
   try {
     let data = payload;
+    if (!data && isRemoteMode()) {
+      // Remote reads go over the WS (REST is CORS-blocked). Only possible once
+      // a socket is open; otherwise keep the default model until connected.
+      if (remoteWsConnection?.client?.readyState !== 1) {
+        availableModels = normalizeHermesModels([], settings.model);
+        renderModelOptions(availableModels);
+        return;
+      }
+      data = await remoteWsConnection.client.request(WS_METHODS.modelOptions);
+    }
     if (!data) {
       const response = await apiFetch('/v1/models', { method: 'GET' });
       data = await readJsonResponse(response);
@@ -2317,14 +2327,26 @@ async function ensureRemoteWsClient() {
   }
   remoteWsConnection = null;
 
+  console.info('[Hermes] remote: minting ws-ticket via dashboard tab for', baseUrl);
   const ticket = await mintWsTicket({ tabsApi: chrome.tabs, scriptingApi: chrome.scripting, baseUrl });
   if (!ticket.ok) {
+    console.warn('[Hermes] remote: ws-ticket mint failed:', ticket.reason, ticket);
     const error = new Error(ticketFailureHelp(ticket.reason, ticket.origin));
     error.ticketReason = ticket.reason;
     throw error;
   }
+  const wsUrl = buildDashboardWsUrl(baseUrl, ticket.ticket);
+  console.info(
+    `[Hermes] remote: ticket ok (ttl=${ticket.ttlSeconds}s, ${String(ticket.ticket || '').length} chars); connecting`,
+    wsUrl.replace(/ticket=[^&]+/, `ticket=<${String(ticket.ticket || '').length} chars>`),
+  );
   const client = createGatewayClient();
-  await client.connect(buildDashboardWsUrl(baseUrl, ticket.ticket));
+  try {
+    await client.connect(wsUrl);
+  } catch (error) {
+    console.warn('[Hermes] remote: WebSocket connect failed:', error?.message || error);
+    throw error;
+  }
   const connection = { client, baseUrl, wsSessionId: '' };
   client.on('close', () => {
     if (remoteWsConnection === connection) remoteWsConnection = null;
@@ -2684,6 +2706,24 @@ async function testConnection() {
   els.testConnectionButton.disabled = true;
   els.testConnectionButton.textContent = 'Testing...';
   try {
+    if (isRemoteMode()) {
+      // The dashboard's REST surface (including /api/status) is CORS-blocked
+      // from the extension origin, so the WebSocket is the only thing we can
+      // exercise. Minting a ticket + opening the socket validates the whole
+      // path: a signed-in dashboard tab, the ticket flow, and the handshake.
+      const connection = await ensureRemoteWsClient();
+      let modelNote = '';
+      try {
+        const models = await connection.client.request(WS_METHODS.modelOptions);
+        await loadModels({ quiet: true, payload: models });
+        modelNote = availableModels.length ? ` · ${availableModels.length} models` : '';
+      } catch {
+        // model.options shape varies across gateways; the socket is already proven.
+      }
+      updateConnectionPrompt();
+      setStatus('ok', 'Remote Hermes dashboard connected', `${normalizeGatewayUrl(settings.gatewayUrl)}${modelNote}`);
+      return;
+    }
     const response = await apiFetch('/health', { method: 'GET' });
     const text = await response.text();
     if (!response.ok) throw new Error(`${response.status}: ${text}`);
