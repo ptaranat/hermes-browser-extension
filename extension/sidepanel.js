@@ -39,6 +39,8 @@ import {
   skillSuggestionsForInput,
 } from './lib/common.mjs';
 import { extractYouTubeVideoId } from './lib/transcript.mjs';
+import { buildDashboardWsUrl, createGatewayClient, WS_EVENTS, WS_METHODS } from './lib/gateway-ws.mjs';
+import { mintWsTicket, ticketFailureHelp } from './lib/dashboard-bridge.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -148,6 +150,23 @@ let dictating = false;
 let dictationBaseText = '';
 let dictationFinalText = '';
 let sessionRoutesAvailable = null;
+// In remote mode the extension talks to the OAuth-gated dashboard over its
+// /api/ws JSON-RPC socket (the api_server REST/SSE surface is unavailable
+// cross-origin). This holds the live socket + the dashboard-assigned session id.
+let remoteWsConnection = null;
+
+function isRemoteMode() {
+  return resolveConnectionMode(settings) === 'remote';
+}
+
+// Connection readiness differs by mode: local/api_server auth is the Bearer API
+// key; remote (gated dashboard) auth is a per-connect ws-ticket, so readiness
+// there just means a non-loopback https URL is configured.
+function isConnected() {
+  return isRemoteMode()
+    ? Boolean(normalizeGatewayUrl(settings.gatewayUrl)) && !isLoopbackGatewayUrl(settings.gatewayUrl)
+    : Boolean(settings.apiKey);
+}
 
 function setStatus(kind, title, detail) {
   els.statusDot.className = `status-dot ${kind || ''}`.trim();
@@ -209,7 +228,7 @@ async function checkForUpdates() {
 }
 
 function updateConnectionPrompt() {
-  const connected = Boolean(settings.apiKey);
+  const connected = isConnected();
   els.connectPanel.hidden = connected;
   els.connectionPill.textContent = '●';
   els.connectionPill.className = `connection-pill ${connected ? 'ok' : 'warn'}`;
@@ -217,7 +236,11 @@ function updateConnectionPrompt() {
   els.connectionPill.setAttribute('aria-label', connected ? 'Hermes connected' : 'Hermes not connected');
   if (!connected) {
     els.sendButton.textContent = 'Connect first';
-    setStatus('warn', 'Connect Hermes Desktop', 'Click Connect to Hermes, approve locally, then start chatting.');
+    if (isRemoteMode()) {
+      setStatus('warn', 'Set a remote gateway', 'Open Settings, enter your remote https gateway URL, and sign in to it in a browser tab.');
+    } else {
+      setStatus('warn', 'Connect Hermes Desktop', 'Click Connect to Hermes, approve locally, then start chatting.');
+    }
   } else {
     els.sendButton.textContent = sending ? 'Queue message' : 'Ask Hermes';
   }
@@ -225,10 +248,11 @@ function updateConnectionPrompt() {
 }
 
 function updateComposerBusyState() {
+  const connected = isConnected();
   if (els.inlineSendButton) {
     els.inlineSendButton.hidden = sending;
-    els.inlineSendButton.disabled = sending || !settings.apiKey;
-    els.inlineSendButton.title = settings.apiKey ? 'Send message' : 'Connect to Hermes first';
+    els.inlineSendButton.disabled = sending || !connected;
+    els.inlineSendButton.title = connected ? 'Send message' : 'Connect to Hermes first';
     els.inlineSendButton.setAttribute('aria-label', els.inlineSendButton.title);
   }
   if (els.stopButton) {
@@ -236,8 +260,8 @@ function updateComposerBusyState() {
     els.stopButton.disabled = !sending;
   }
   if (els.sendButton) {
-    els.sendButton.disabled = !settings.apiKey && !sending;
-    if (settings.apiKey) els.sendButton.textContent = sending ? 'Queue message' : 'Ask Hermes';
+    els.sendButton.disabled = !connected && !sending;
+    if (connected) els.sendButton.textContent = sending ? 'Queue message' : 'Ask Hermes';
   }
   renderQueueNotice();
 }
@@ -274,7 +298,7 @@ function isAbortError(error) {
 async function stopCurrentTurn() {
   if (!sending) return;
   setStatus('warn', 'Stopping Hermes', activeRunId ? `Interrupt requested for ${activeRunId}` : 'Closing the active browser stream');
-  if (activeRunId) {
+  if (activeRunId && !isRemoteMode()) {
     apiFetch(`/v1/runs/${encodeURIComponent(activeRunId)}/stop`, { method: 'POST' }).catch(() => {});
   }
   activeAbortController?.abort();
@@ -2281,7 +2305,104 @@ function currentModelOptionsPayload() {
   return buildHermesModelOptions(settings);
 }
 
+async function ensureRemoteWsClient() {
+  const baseUrl = normalizeGatewayUrl(settings.gatewayUrl);
+  if (remoteWsConnection?.client && remoteWsConnection.client.readyState === 1 && remoteWsConnection.baseUrl === baseUrl) {
+    return remoteWsConnection;
+  }
+  try {
+    remoteWsConnection?.client?.close();
+  } catch {
+    /* ignore */
+  }
+  remoteWsConnection = null;
+
+  const ticket = await mintWsTicket({ tabsApi: chrome.tabs, scriptingApi: chrome.scripting, baseUrl });
+  if (!ticket.ok) {
+    const error = new Error(ticketFailureHelp(ticket.reason, ticket.origin));
+    error.ticketReason = ticket.reason;
+    throw error;
+  }
+  const client = createGatewayClient();
+  await client.connect(buildDashboardWsUrl(baseUrl, ticket.ticket));
+  const connection = { client, baseUrl, wsSessionId: '' };
+  client.on('close', () => {
+    if (remoteWsConnection === connection) remoteWsConnection = null;
+  });
+  remoteWsConnection = connection;
+  return connection;
+}
+
+async function ensureRemoteWsSession(connection) {
+  if (connection.wsSessionId) return connection.wsSessionId;
+  const result = await connection.client.request(WS_METHODS.sessionCreate, {
+    title: settings.sessionTitle,
+    reasoning_effort: normalizeReasoningEffort(settings.reasoningEffort),
+    fast: Boolean(settings.fastMode),
+  });
+  connection.wsSessionId = result?.session_id || '';
+  if (!connection.wsSessionId) throw new Error('Dashboard did not return a session id.');
+  return connection.wsSessionId;
+}
+
+async function streamRemoteWsChat(prompt, onDelta, onTool, { signal, onRun } = {}) {
+  const connection = await ensureRemoteWsClient();
+  const sessionId = await ensureRemoteWsSession(connection);
+  onRun?.(sessionId);
+  const { client } = connection;
+
+  return new Promise((resolve, reject) => {
+    let finalText = '';
+    let settled = false;
+    const offs = [];
+    const forThisSession = (event) => !event.sessionId || event.sessionId === sessionId;
+
+    const cleanup = () => {
+      for (const off of offs) off();
+      signal?.removeEventListener?.('abort', onAbort);
+    };
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    };
+    function onAbort() {
+      client.request(WS_METHODS.sessionInterrupt, { session_id: sessionId }).catch(() => {});
+      finish(reject, new DOMException('Hermes turn stopped by user', 'AbortError'));
+    }
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+
+    offs.push(client.on(WS_EVENTS.messageDelta, (event) => {
+      if (!forThisSession(event)) return;
+      finalText += event.payload?.text || '';
+      onDelta(finalText);
+    }));
+    offs.push(client.on(WS_EVENTS.messageComplete, (event) => {
+      if (!forThisSession(event)) return;
+      finalText = event.payload?.text || finalText;
+      onDelta(finalText);
+      finish(resolve, finalText);
+    }));
+    offs.push(client.on('tool.start', (event) => {
+      if (forThisSession(event) && onTool) onTool({ tool_name: event.payload?.name });
+    }));
+    offs.push(client.on(WS_EVENTS.error, (event) => {
+      finish(reject, new Error(event.payload?.message || 'Dashboard stream error'));
+    }));
+    offs.push(client.on('close', () => finish(reject, new Error('Dashboard connection closed mid-turn.'))));
+
+    client.request(WS_METHODS.promptSubmit, { session_id: sessionId, text: prompt }).catch((error) => finish(reject, error));
+  });
+}
+
 async function streamSessionChat(prompt, onDelta, onTool, { signal, attachments: turnAttachments = attachments, onRun } = {}) {
+  if (isRemoteMode()) return streamRemoteWsChat(prompt, onDelta, onTool, { signal, onRun });
   const hasSessionRoutes = await ensureHermesSession();
   if (!hasSessionRoutes) return streamChatCompletions(prompt, onDelta, onTool, { signal, attachments: turnAttachments, onRun });
 
@@ -2462,9 +2583,11 @@ async function fallbackChatCompletions(prompt, turnAttachments = attachments) {
 }
 
 async function askHermes(userText, turnAttachments = [...attachments]) {
-  if (!settings.apiKey) {
+  if (!isConnected()) {
     updateConnectionPrompt();
-    addMessage('system', 'Connection setup needed: click Connect to Hermes, approve in the local Hermes approval page, then send again. Your draft is still in the composer.');
+    addMessage('system', isRemoteMode()
+      ? 'Remote setup needed: open Settings, enter your remote https gateway URL, and sign in to that dashboard in a browser tab. Your draft is still in the composer.'
+      : 'Connection setup needed: click Connect to Hermes, approve in the local Hermes approval page, then send again. Your draft is still in the composer.');
     els.connectButton.focus();
     return false;
   }
@@ -2520,6 +2643,11 @@ async function askHermes(userText, turnAttachments = [...attachments]) {
     } catch (streamError) {
       if (isAbortError(streamError)) {
         answer = liveText ? `${liveText}\n\n[stopped by user]` : '[stopped by user]';
+      } else if (isRemoteMode()) {
+        // No REST fallback in remote mode — the api_server surface is not
+        // reachable cross-origin. Surface the WS/ticket error directly.
+        streamView.update(`Could not reach the Hermes dashboard.\n${streamError.message}`);
+        throw streamError;
       } else {
         streamView.update(`Streaming failed, retrying non-streaming...\n${streamError.message}`);
         answer = await fallbackSessionChat(prompt, preparedAttachments);
