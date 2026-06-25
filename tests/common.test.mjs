@@ -38,6 +38,7 @@ import {
   isNewerVersion,
   normalizeExtensionVersion,
   isLoopbackGatewayUrl,
+  isUsableRemoteGatewayUrl,
   normalizeConnectionMode,
   resolveConnectionMode,
 } from '../extension/lib/common.mjs';
@@ -442,4 +443,12 @@ test('connection mode helpers classify local vs remote gateways', () => {
   // Legacy settings (no connectionMode) derive from the URL.
   assert.equal(resolveConnectionMode({ gatewayUrl: 'https://host.example.com' }), 'remote');
   assert.equal(resolveConnectionMode({ gatewayUrl: 'http://localhost:8642' }), 'local');
+});
+
+test('isUsableRemoteGatewayUrl requires a parseable https URL', () => {
+  assert.equal(isUsableRemoteGatewayUrl('https://kurokami.example.ts.net'), true);
+  assert.equal(isUsableRemoteGatewayUrl('https://host.ts.net:8643/hermes'), true);
+  assert.equal(isUsableRemoteGatewayUrl('http://host.ts.net'), false); // non-loopback http is mixed-content blocked
+  assert.equal(isUsableRemoteGatewayUrl('example.com'), false); // no scheme, fails to parse
+  assert.equal(isUsableRemoteGatewayUrl(''), false);
 });

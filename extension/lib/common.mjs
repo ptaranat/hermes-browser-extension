@@ -100,6 +100,17 @@ export function isLoopbackGatewayUrl(value = '') {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }
 
+// A remote gateway is reachable from the (secure-context) side panel only over
+// https. Plain http to a non-loopback host is blocked as mixed content, and a
+// bare host like "example.com" fails to parse, so neither counts as usable.
+export function isUsableRemoteGatewayUrl(value = '') {
+  try {
+    return new URL(String(value || '')).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeConnectionMode(value = DEFAULT_SETTINGS.connectionMode) {
   const raw = String(value || '').trim().toLowerCase();
   return CONNECTION_MODES.includes(raw) ? raw : DEFAULT_SETTINGS.connectionMode;

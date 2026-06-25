@@ -25,6 +25,7 @@ import {
   normalizeHermesSessions,
   normalizeHermesSkills,
   isLoopbackGatewayUrl,
+  isUsableRemoteGatewayUrl,
   normalizeExtensionVersion,
   normalizeGatewayUrl,
   normalizeConnectionMode,
@@ -164,7 +165,7 @@ function isRemoteMode() {
 // there just means a non-loopback https URL is configured.
 function isConnected() {
   return isRemoteMode()
-    ? Boolean(normalizeGatewayUrl(settings.gatewayUrl)) && !isLoopbackGatewayUrl(settings.gatewayUrl)
+    ? isUsableRemoteGatewayUrl(settings.gatewayUrl)
     : Boolean(settings.apiKey);
 }
 
@@ -1972,10 +1973,18 @@ function syncSettingsForm() {
 
 async function saveSettingsFromForm() {
   const selected = availableModels.find((model) => model.id === settings.model);
+  const connectionMode = activeConnectionMode();
+  const rawGatewayUrl = els.gatewayUrlInput.value.trim();
+  // In remote mode, don't coerce an empty field to the loopback default —
+  // that would persist a misleading "remote + localhost" config and later
+  // try to mint tickets against localhost. Leave it empty (not connected).
+  const gatewayUrl = rawGatewayUrl
+    ? normalizeGatewayUrl(rawGatewayUrl)
+    : (connectionMode === 'remote' ? '' : normalizeGatewayUrl(''));
   settings = {
     ...settings,
-    gatewayUrl: normalizeGatewayUrl(els.gatewayUrlInput.value),
-    connectionMode: activeConnectionMode(),
+    gatewayUrl,
+    connectionMode,
     apiKey: els.apiKeyInput.value.trim(),
     model: settings.model || DEFAULT_SETTINGS.model,
     modelContextTokens: selected?.contextTokens || settings.modelContextTokens || 0,
@@ -2387,6 +2396,9 @@ function currentModelOptionsPayload() {
 
 async function ensureRemoteWsClient() {
   const baseUrl = normalizeGatewayUrl(settings.gatewayUrl);
+  if (!isUsableRemoteGatewayUrl(baseUrl)) {
+    throw new Error('Set a remote https gateway URL in Settings before connecting.');
+  }
   if (remoteWsConnection?.client && remoteWsConnection.client.readyState === 1 && remoteWsConnection.baseUrl === baseUrl) {
     return remoteWsConnection;
   }
@@ -2437,7 +2449,7 @@ async function ensureRemoteWsSession(connection) {
   // Reflect the dashboard-assigned id so the session menu/label track the live
   // remote session instead of the local default placeholder.
   settings = { ...settings, sessionId: connection.wsSessionId };
-  chrome.storage.local.set({ hermesBrowserSettings: settings });
+  await chrome.storage.local.set({ hermesBrowserSettings: settings });
   updateSessionLabel();
   return connection.wsSessionId;
 }
