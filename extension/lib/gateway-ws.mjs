@@ -13,6 +13,7 @@ export const WS_METHODS = Object.freeze({
   sessionCreate: 'session.create',
   sessionResume: 'session.resume',
   sessionList: 'session.list',
+  sessionHistory: 'session.history',
   sessionInfo: 'session.info',
   promptSubmit: 'prompt.submit',
   sessionInterrupt: 'session.interrupt',

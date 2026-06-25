@@ -1638,6 +1638,27 @@ async function loadAllHermesSessions() {
 }
 
 async function loadSessions({ quiet = false } = {}) {
+  if (isRemoteMode()) {
+    // Remote reads go over the WS; only possible once a socket is open.
+    if (remoteWsConnection?.client?.readyState !== 1) {
+      availableSessions = [];
+      updateSessionLabel();
+      renderSessionMenu();
+      return;
+    }
+    try {
+      const result = await remoteWsConnection.client.request(WS_METHODS.sessionList, { limit: 200 });
+      availableSessions = normalizeHermesSessions(result);
+      updateSessionLabel();
+      renderSessionMenu();
+      if (!quiet) setStatus('ok', 'Hermes sessions synced', `${availableSessions.length} sessions available`);
+    } catch (error) {
+      updateSessionLabel();
+      renderSessionMenu();
+      if (!quiet) setStatus('warn', 'Session sync failed', error?.message || String(error));
+    }
+    return;
+  }
   if (!settings.apiKey) {
     availableSessions = [];
     updateSessionLabel();
@@ -1674,6 +1695,28 @@ function makeBrowserSessionTitle(date = new Date()) {
 }
 
 async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), focus = true } = {}) {
+  if (isRemoteMode()) {
+    const connection = await ensureRemoteWsClient();
+    const result = await connection.client.request(WS_METHODS.sessionCreate, {
+      title,
+      reasoning_effort: normalizeReasoningEffort(settings.reasoningEffort),
+      fast: Boolean(settings.fastMode),
+    });
+    const id = result?.session_id;
+    if (!id) throw new Error('Dashboard did not return a session id.');
+    connection.wsSessionId = id;
+    const session = normalizeHermesSessions({ sessions: [{ id, title, source: settings.sessionSource || DEFAULT_SETTINGS.sessionSource }] })[0]
+      || { id, title, source: settings.sessionSource };
+    availableSessions = normalizeHermesSessions({ sessions: [session, ...availableSessions.filter((item) => item.id !== id)] });
+    settings = { ...settings, sessionId: id, sessionTitle: session.title || title };
+    messages = [];
+    await chrome.storage.local.set({ hermesBrowserSettings: settings, hermesBrowserMessages: [] });
+    renderMessagesFromStorage();
+    updateSessionLabel();
+    renderSessionMenu();
+    if (focus) els.input.focus();
+    return session;
+  }
   const sessionId = makeBrowserSessionId();
   const response = await apiFetch('/api/sessions', {
     method: 'POST',
@@ -1701,10 +1744,20 @@ async function createHermesBrowserSession({ title = makeBrowserSessionTitle(), f
 }
 
 async function openHermesSession(session) {
-  settings = { ...settings, sessionId: session.id, sessionTitle: session.title || session.id };
-  sessionRoutesAvailable = true;
   els.sessionMenu.hidden = true;
   els.sessionMenuButton.setAttribute('aria-expanded', 'false');
+  if (isRemoteMode()) {
+    try {
+      const connection = await ensureRemoteWsClient();
+      await connection.client.request(WS_METHODS.sessionResume, { session_id: session.id });
+      connection.wsSessionId = session.id;
+    } catch (error) {
+      setStatus('error', 'Could not open session', error?.message || String(error));
+      return;
+    }
+  }
+  settings = { ...settings, sessionId: session.id, sessionTitle: session.title || session.id };
+  sessionRoutesAvailable = true;
   await chrome.storage.local.set({ hermesBrowserSettings: settings });
   updateSessionLabel();
   renderSessionMenu();
@@ -1713,6 +1766,23 @@ async function openHermesSession(session) {
 }
 
 async function loadSessionMessages(sessionId = settings.sessionId) {
+  if (isRemoteMode()) {
+    if (remoteWsConnection?.client?.readyState !== 1) return;
+    try {
+      const result = await remoteWsConnection.client.request(WS_METHODS.sessionHistory, { session_id: sessionId });
+      const rows = Array.isArray(result?.messages) ? result.messages : [];
+      messages = rows
+        .filter((message) => ['user', 'assistant', 'system'].includes(message.role))
+        .map((message) => ({ role: message.role, content: coerceWsMessageContent(message.content), ts: Number(message.timestamp || message.ts || Date.now()) }))
+        .filter((message) => message.content)
+        .slice(-settings.maxLocalMessages);
+      await chrome.storage.local.set({ hermesBrowserMessages: messages });
+      renderMessagesFromStorage();
+    } catch (error) {
+      addMessage('system', `Could not load session messages: ${error?.message || String(error)}`);
+    }
+    return;
+  }
   if (!settings.apiKey) return;
   try {
     const response = await apiFetch(`/api/sessions/${encodeSessionId(sessionId)}/messages`, { method: 'GET' });
@@ -2364,7 +2434,23 @@ async function ensureRemoteWsSession(connection) {
   });
   connection.wsSessionId = result?.session_id || '';
   if (!connection.wsSessionId) throw new Error('Dashboard did not return a session id.');
+  // Reflect the dashboard-assigned id so the session menu/label track the live
+  // remote session instead of the local default placeholder.
+  settings = { ...settings, sessionId: connection.wsSessionId };
+  chrome.storage.local.set({ hermesBrowserSettings: settings });
+  updateSessionLabel();
   return connection.wsSessionId;
+}
+
+// Dashboard history content may be a string, an array of text parts, or a
+// single block object; flatten to plain text for the message pane.
+function coerceWsMessageContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => (typeof part === 'string' ? part : part?.text || '')).filter(Boolean).join('');
+  }
+  if (content && typeof content === 'object') return String(content.text || '');
+  return '';
 }
 
 async function streamRemoteWsChat(prompt, onDelta, onTool, { signal, onRun } = {}) {
@@ -2787,7 +2873,7 @@ function bindEvents() {
     }
   });
   els.newSessionButton.addEventListener('click', async () => {
-    if (!settings.apiKey) {
+    if (!isConnected()) {
       updateConnectionPrompt();
       els.connectButton.focus();
       return;
