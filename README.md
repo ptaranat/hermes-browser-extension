@@ -17,7 +17,7 @@ Public alpha. Load unpacked. Local-first. Read-only browser context. **Not on th
 ## Features
 
 - Chrome/Edge/Chromium MV3 side panel powered by the Side Panel API.
-- Connects to a local Hermes API server at `http://127.0.0.1:8642`.
+- Connects to a local Hermes API server at `http://127.0.0.1:8642`, or a remote https dashboard over its WebSocket (see [Remote gateway](#remote-gateway-advanced)).
 - Auto-syncs the connected Hermes runtime's providers/models, profiles, skills, and sessions after Connect/Test/Save and on side-panel startup.
 - Sends active page/browser context to a persisted Hermes session.
 - Captures active tab title/URL, open tabs, selected text, readable page text, metadata, headings, forms, links, and buttons where available.
@@ -117,6 +117,19 @@ After connection, the side panel automatically loads from the connected Hermes g
 - `/v1/capabilities` — feature flags such as audio transcription and Browser upload support.
 
 The DOM/context chip should show a non-zero page-context count on normal readable pages. Browser internal pages such as `chrome://extensions` are intentionally restricted.
+
+## Remote gateway (advanced)
+
+You can point the extension at a Hermes dashboard running on another machine (for example over Tailscale) instead of a local API server. Open Settings, pick **Remote gateway**, and enter the dashboard URL.
+
+How it works and what it needs:
+
+- The remote host must be reachable over **https** (the side panel is a secure context, so plain `http://` to a non-loopback host is blocked by the browser). A `tailscale serve` front with a real cert works.
+- A remote, OAuth/password-gated dashboard does not use the `API_SERVER_KEY`. Instead the extension talks to the dashboard's `/api/ws` socket and authenticates with a short-lived, single-use ticket.
+- That ticket is minted from a **signed-in dashboard tab**: open the dashboard URL in a normal browser tab and sign in, then keep that tab around. The extension mints the ticket first-party from that tab (the dashboard's CORS and `SameSite=Lax` cookie make a direct cross-origin mint impossible). If no signed-in tab is open, the extension tells you to open and sign in.
+- **Test connection** in remote mode opens the socket and loads the model list, confirming the whole path. Sessions list, open, and create over the socket as well.
+
+Known limitations in remote mode: image attachments are inline-only (the local image-upload endpoint is not used), and a few REST-only reads (skills, profiles) are unavailable because the dashboard's REST surface is not reachable cross-origin from the extension.
 
 ## Install with Hermes / Computer Use
 
