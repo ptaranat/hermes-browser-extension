@@ -37,6 +37,9 @@ import {
   compareVersionStrings,
   isNewerVersion,
   normalizeExtensionVersion,
+  isLoopbackGatewayUrl,
+  normalizeConnectionMode,
+  resolveConnectionMode,
 } from '../extension/lib/common.mjs';
 import {
   extractYouTubeVideoId,
@@ -422,4 +425,21 @@ test('Windows setup helper supports safe JSON dry-run without exposing secrets',
   assert.ok(payload.actions.some((action) => action.id === 'start-local-pairing'));
   assert.doesNotMatch(result.stdout, /API_SERVER_KEY=/);
   assert.doesNotMatch(result.stdout, /sk-[A-Za-z0-9_-]{12,}/);
+});
+
+test('connection mode helpers classify local vs remote gateways', () => {
+  assert.equal(isLoopbackGatewayUrl('http://127.0.0.1:8642'), true);
+  assert.equal(isLoopbackGatewayUrl('http://localhost:8642'), true);
+  assert.equal(isLoopbackGatewayUrl(''), true);
+  assert.equal(isLoopbackGatewayUrl('https://kurokami.example.ts.net'), false);
+
+  assert.equal(normalizeConnectionMode('remote'), 'remote');
+  assert.equal(normalizeConnectionMode('REMOTE'), 'remote');
+  assert.equal(normalizeConnectionMode('bogus'), DEFAULT_SETTINGS.connectionMode);
+
+  // Explicit saved mode wins.
+  assert.equal(resolveConnectionMode({ connectionMode: 'remote', gatewayUrl: 'http://127.0.0.1:8642' }), 'remote');
+  // Legacy settings (no connectionMode) derive from the URL.
+  assert.equal(resolveConnectionMode({ gatewayUrl: 'https://host.example.com' }), 'remote');
+  assert.equal(resolveConnectionMode({ gatewayUrl: 'http://localhost:8642' }), 'local');
 });

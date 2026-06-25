@@ -24,8 +24,11 @@ import {
   normalizeHermesProfiles,
   normalizeHermesSessions,
   normalizeHermesSkills,
+  isLoopbackGatewayUrl,
   normalizeExtensionVersion,
   normalizeGatewayUrl,
+  normalizeConnectionMode,
+  resolveConnectionMode,
   normalizeReasoningEffort,
   reasoningEffortShortLabel,
   renderMarkdown,
@@ -103,7 +106,9 @@ const els = {
   contextMeterFill: $('#contextMeterFill'),
   contextPopover: $('#contextPopover'),
   contextBreakdown: $('#contextBreakdown'),
+  connModeButtons: Array.from(document.querySelectorAll('[data-conn-mode]')),
   gatewayUrlInput: $('#gatewayUrlInput'),
+  gatewayUrlHint: $('#gatewayUrlHint'),
   apiKeyInput: $('#apiKeyInput'),
   sessionIdInput: $('#sessionIdInput'),
   sessionTitleInput: $('#sessionTitleInput'),
@@ -1815,11 +1820,42 @@ function renderMessagesFromStorage() {
   renderEmptyState();
 }
 
+function activeConnectionMode() {
+  const active = (els.connModeButtons || []).find((button) => button.getAttribute('aria-checked') === 'true');
+  return normalizeConnectionMode(active?.dataset.connMode);
+}
+
+function renderConnectionMode(mode) {
+  const normalized = normalizeConnectionMode(mode);
+  for (const button of els.connModeButtons || []) {
+    const selected = button.dataset.connMode === normalized;
+    button.classList.toggle('selected', selected);
+    button.setAttribute('aria-checked', String(selected));
+  }
+  if (els.gatewayUrlHint) els.gatewayUrlHint.hidden = normalized !== 'remote';
+  if (els.gatewayUrlInput) {
+    els.gatewayUrlInput.placeholder = normalized === 'remote' ? 'https://your-host.example.com' : DEFAULT_SETTINGS.gatewayUrl;
+  }
+}
+
+function selectConnectionMode(mode) {
+  const normalized = normalizeConnectionMode(mode);
+  const current = els.gatewayUrlInput?.value.trim() || '';
+  if (normalized === 'local' && (!current || !isLoopbackGatewayUrl(current))) {
+    els.gatewayUrlInput.value = DEFAULT_SETTINGS.gatewayUrl;
+  } else if (normalized === 'remote' && (!current || isLoopbackGatewayUrl(current))) {
+    els.gatewayUrlInput.value = '';
+  }
+  renderConnectionMode(normalized);
+  if (normalized === 'remote') els.gatewayUrlInput?.focus();
+}
+
 function syncSettingsForm() {
   renderAppearanceControls();
   renderProfiles();
   renderModelOptions(availableModels);
   els.gatewayUrlInput.value = settings.gatewayUrl;
+  renderConnectionMode(resolveConnectionMode(settings));
   els.apiKeyInput.value = settings.apiKey || '';
   els.sessionIdInput.value = settings.sessionId;
   els.sessionTitleInput.value = settings.sessionTitle;
@@ -1835,6 +1871,7 @@ async function saveSettingsFromForm() {
   settings = {
     ...settings,
     gatewayUrl: normalizeGatewayUrl(els.gatewayUrlInput.value),
+    connectionMode: activeConnectionMode(),
     apiKey: els.apiKeyInput.value.trim(),
     model: settings.model || DEFAULT_SETTINGS.model,
     modelContextTokens: selected?.contextTokens || settings.modelContextTokens || 0,
@@ -2638,6 +2675,9 @@ function bindEvents() {
       els.contextBarButton.setAttribute('aria-expanded', 'false');
     }
   });
+  for (const button of els.connModeButtons || []) {
+    button.addEventListener('click', () => selectConnectionMode(button.dataset.connMode));
+  }
   els.refreshButton.addEventListener('click', refreshContext);
   els.stopButton?.addEventListener('click', stopCurrentTurn);
   els.voiceButton?.addEventListener('click', toggleVoiceDictation);

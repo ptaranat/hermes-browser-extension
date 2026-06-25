@@ -234,14 +234,26 @@
         <section class="settings-section connection-settings" aria-labelledby="connectionTitle">
           <div class="settings-section-head">
             <div>
-              <h3 id="connectionTitle">Local Connection</h3>
-              <p>Connect Hermes Browser Extension to the local Hermes Agent gateway.</p>
+              <h3 id="connectionTitle">Gateway Connection</h3>
+              <p>Connect Hermes Browser Extension to a Hermes Agent backend. Use a remote gateway to reach an already-running Hermes backend on another machine or behind a trusted proxy.</p>
             </div>
           </div>
 
+        <div class="conn-mode-grid" role="radiogroup" aria-label="Gateway location">
+          <button class="conn-mode-card" type="button" id="connModeLocal" data-conn-mode="local" role="radio" aria-checked="true">
+            <span class="conn-mode-title">Local gateway</span>
+            <span class="conn-mode-desc">Connect to a Hermes backend on localhost. The default; works offline.</span>
+          </button>
+          <button class="conn-mode-card" type="button" id="connModeRemote" data-conn-mode="remote" role="radio" aria-checked="false">
+            <span class="conn-mode-title">Remote gateway</span>
+            <span class="conn-mode-desc">Connect to a remote Hermes backend over https.</span>
+          </button>
+        </div>
+
         <label>
-          Gateway URL
+          <span id="gatewayUrlLabel">Gateway URL</span>
           <input id="gatewayUrlInput" name="gatewayUrl" type="url" placeholder="http://127.0.0.1:8642" />
+          <small class="field-hint" id="gatewayUrlHint" hidden>Base URL for the remote backend. Path prefixes are supported, for example /hermes.</small>
         </label>
 
         <label>

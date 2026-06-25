@@ -8,6 +8,7 @@ export const MODEL_EFFORTS = Object.freeze([
 
 export const DEFAULT_SETTINGS = Object.freeze({
   gatewayUrl: 'http://127.0.0.1:8642',
+  connectionMode: 'local',
   apiKey: '',
   sessionId: 'hermes-browser-extension',
   sessionTitle: 'Hermes Browser Extension',
@@ -83,6 +84,33 @@ const SENSITIVE_URL_PATTERNS = [
 export function normalizeGatewayUrl(value = DEFAULT_SETTINGS.gatewayUrl) {
   const raw = String(value || '').trim() || DEFAULT_SETTINGS.gatewayUrl;
   return raw.replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
+export const CONNECTION_MODES = Object.freeze(['local', 'remote']);
+
+export function isLoopbackGatewayUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return true;
+  let host;
+  try {
+    host = new URL(raw).hostname.toLowerCase();
+  } catch {
+    return /^(https?:\/\/)?(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(raw);
+  }
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+}
+
+export function normalizeConnectionMode(value = DEFAULT_SETTINGS.connectionMode) {
+  const raw = String(value || '').trim().toLowerCase();
+  return CONNECTION_MODES.includes(raw) ? raw : DEFAULT_SETTINGS.connectionMode;
+}
+
+// Prefer an explicit saved mode; otherwise derive it from the gateway URL so
+// settings saved before connectionMode existed still resolve correctly.
+export function resolveConnectionMode(settings = DEFAULT_SETTINGS) {
+  const explicit = String(settings?.connectionMode || '').trim().toLowerCase();
+  if (CONNECTION_MODES.includes(explicit)) return explicit;
+  return isLoopbackGatewayUrl(settings?.gatewayUrl) ? 'local' : 'remote';
 }
 
 export function clampText(value = '', maxChars = 12_000) {
